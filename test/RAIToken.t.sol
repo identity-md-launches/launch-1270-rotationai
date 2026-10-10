@@ -41,6 +41,15 @@ contract RAITokenTest {
         require(keccak256(bytes(token.symbol())) == keccak256("RAI"), "wrong ticker");
     }
 
+    function test_DeploymentEmitsExactlyOneMintToDeployer() public {
+        vm.recordLogs();
+        token = new RAIToken();
+        VmRAI.Log[] memory logs = vm.getRecordedLogs();
+        require(logs.length == 1, "constructor emitted extra allocations");
+        _assertTransfer(logs[0], address(0), address(this), SUPPLY);
+        require(token.balanceOf(address(this)) == SUPPLY, "mint recipient mismatch");
+    }
+
     function test_FactorySeedIsOneUntaxedTransferAfterWholeSwarmAllocation() public {
         token.transfer(DISTRIBUTOR, SUPPLY / 10);
         vm.recordLogs();
@@ -156,6 +165,20 @@ contract RAITokenTest {
         vm.prank(ROUTER);
         token.transferFrom(MANAGER, ALICE, 100e18);
         require(token.balanceOf(MANAGER) == 100e18 && token.balanceOf(CREATOR) == 0, "partial transfer");
+    }
+
+    function test_InvalidBuyReceiverPreservesAllowanceAndBalances() public {
+        token.transfer(MANAGER, 100e18);
+        vm.prank(MANAGER);
+        token.approve(ROUTER, 100e18);
+        vm.expectRevert(abi.encodeWithSelector(RAIToken.ERC20InvalidReceiver.selector, address(0)));
+        vm.prank(ROUTER);
+        token.transferFrom(MANAGER, address(0), 100e18);
+        require(token.allowance(MANAGER, ROUTER) == 100e18, "failed buy spent allowance");
+        require(token.balanceOf(MANAGER) == 100e18, "failed buy debited pool");
+        require(token.balanceOf(CREATOR) == 0, "failed buy paid tax");
+        require(token.balanceOf(address(0)) == 0, "failed buy burned tokens");
+        _assertConservation();
     }
 
     function test_ZeroTransfersAndSelfTransfersPreserveSupply() public {
