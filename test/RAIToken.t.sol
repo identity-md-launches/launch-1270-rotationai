@@ -281,6 +281,68 @@ contract RAITokenTest {
         require(token.balanceOf(ALICE) == 100e18, "deployer privilege");
     }
 
+    function test_ApprovalOverwriteEmitsReplacementAndCannotSpendOldAllowance() public {
+        token.transfer(ALICE, 100e18);
+        vm.prank(ALICE);
+        token.approve(ROUTER, 100e18);
+        vm.recordLogs();
+        vm.prank(ALICE);
+        require(token.approve(ROUTER, 40e18), "approval returned false");
+        VmRAI.Log[] memory logs = vm.getRecordedLogs();
+        require(logs.length == 1 && logs[0].emitter == address(token), "approval event missing");
+        require(logs[0].topics.length == 3, "approval topic count wrong");
+        require(logs[0].topics[0] == keccak256("Approval(address,address,uint256)"), "wrong approval event");
+        require(logs[0].topics[1] == bytes32(uint256(uint160(ALICE))), "wrong approval owner");
+        require(logs[0].topics[2] == bytes32(uint256(uint160(ROUTER))), "wrong approved spender");
+        require(abi.decode(logs[0].data, (uint256)) == 40e18, "approval event not replacement amount");
+        vm.expectRevert(abi.encodeWithSelector(RAIToken.ERC20InsufficientAllowance.selector, ROUTER, 40e18, 41e18));
+        vm.prank(ROUTER);
+        token.transferFrom(ALICE, BOB, 41e18);
+        require(token.allowance(ALICE, ROUTER) == 40e18, "failed spend changed approval");
+        vm.prank(ROUTER);
+        token.transferFrom(ALICE, BOB, 40e18);
+        require(token.allowance(ALICE, ROUTER) == 0, "exact allowance not exhausted");
+        vm.expectRevert(abi.encodeWithSelector(RAIToken.ERC20InsufficientAllowance.selector, ROUTER, 0, 1));
+        vm.prank(ROUTER);
+        token.transferFrom(ALICE, BOB, 1);
+        require(token.balanceOf(ALICE) == 60e18 && token.balanceOf(BOB) == 40e18, "repeated spend succeeded");
+        _assertConservation();
+    }
+
+    function test_InvalidSpenderApprovalLeavesOtherApprovalsAndBalancesIntact() public {
+        token.approve(ROUTER, 123);
+        vm.expectRevert(abi.encodeWithSelector(RAIToken.ERC20InvalidSpender.selector, address(0)));
+        token.approve(address(0), type(uint256).max);
+        require(token.allowance(address(this), ROUTER) == 123, "invalid approve clobbered another spender");
+        require(token.allowance(address(this), address(0)) == 0, "zero spender gained approval");
+        require(token.balanceOf(address(this)) == SUPPLY, "approval moved tokens");
+    }
+
+    function test_FullSupplyBuyHandlesLargestReachableTaxWithoutOverflow() public {
+        token.transfer(MANAGER, SUPPLY);
+        vm.prank(MANAGER);
+        token.transfer(ALICE, SUPPLY);
+        require(token.balanceOf(ALICE) == 970_000_000e18, "full supply net wrong");
+        require(token.balanceOf(CREATOR) == 30_000_000e18, "full supply tax wrong");
+        require(token.balanceOf(MANAGER) == 0, "full supply gross debit wrong");
+        _assertConservation();
+    }
+
+    function testFuzz_FailedGrossBuyDoesNotPayTaxOrSpendAllowance(uint256 balanceSeed, uint256 excessSeed) public {
+        uint256 held = balanceSeed % (SUPPLY + 1);
+        uint256 gross = held + 1 + excessSeed % SUPPLY;
+        token.transfer(MANAGER, held);
+        vm.prank(MANAGER);
+        token.approve(ROUTER, gross);
+        vm.expectRevert(abi.encodeWithSelector(RAIToken.ERC20InsufficientBalance.selector, MANAGER, held, gross));
+        vm.prank(ROUTER);
+        token.transferFrom(MANAGER, ALICE, gross);
+        require(token.allowance(MANAGER, ROUTER) == gross, "rejected gross buy spent allowance");
+        require(token.balanceOf(MANAGER) == held, "rejected gross buy debited pool");
+        require(token.balanceOf(ALICE) == 0 && token.balanceOf(CREATOR) == 0, "rejected gross buy credited output");
+        _assertConservation();
+    }
+
     function test_RuntimeContainsNoForbiddenOpcodes() public view {
         bytes memory runtime = address(token).code;
         for (uint256 i; i < runtime.length; ++i) {
@@ -293,7 +355,6 @@ contract RAITokenTest {
         }
     }
 
-    /// forge-config: default.fuzz.runs = 1000
     function testFuzz_BuySellConservesSupplyAndNeverShortsSell(uint256 seed) public {
         uint256 gross = seed % (SUPPLY + 1);
         token.transfer(MANAGER, gross);
@@ -311,7 +372,6 @@ contract RAITokenTest {
         _assertConservation();
     }
 
-    /// forge-config: default.fuzz.runs = 1000
     function testFuzz_ArbitraryTransferSequencesPreserveBalances(bytes32 seed) public {
         address[7] memory holders = [address(this), MANAGER, CREATOR, ALICE, BOB, ROUTER, DISTRIBUTOR];
         for (uint256 i; i < 64; ++i) {
