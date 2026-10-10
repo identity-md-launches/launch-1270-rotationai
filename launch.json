@@ -1,0 +1,24 @@
+{
+  "kind": "custom_token",
+  "token": {
+    "contract": "RAIToken",
+    "name": "RotationAI",
+    "symbol": "RAI",
+    "decimals": 18,
+    "constructorArgs": [],
+    "totalSupply": "1000000000000000000000000000"
+  },
+  "contracts": [],
+  "pool": {
+    "pairedCurrency": "0x0000000000000000000000000000000000000000",
+    "fee": 12500,
+    "tickSpacing": 60,
+    "initialPrice": "2505414483750479311864138"
+  },
+  "economics": {
+    "poolBps": 9000,
+    "initialMarketCapWei": "1000000000000000000",
+    "remainderTo": "0x000000000000000000000000000000000000dead"
+  },
+  "notes": "The constructor mints the entire fixed 1e27-unit supply to the deployer. The launch factory handles the 90% pool seed and the 10% swarm distribution. Transfers from the fixed PoolManager to other addresses pay a 3% creator tax, rounded down to token minor units; transfers to the PoolManager and ordinary wallet transfers are untaxed. No owner or administrative functions exist. The launch factory configures the 1.25% pool fee and derives the opening price from economics and deployed currency order."
+}
